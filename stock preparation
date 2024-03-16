@@ -1,2 +1,133 @@
-pip install -r requirements.txt
-python run.py
+##############################
+# This is a shiny app for simulating a contrarian stat-arb portfolio strategy
+# based on the z-scores from regressions of returns, using function
+# HighFreq::run_reg(). 
+# The strategy invests in a portfolio with weights equal to the betas. 
+# The model flips the position only if the indicator persists over 
+# several consecutive periods equal to lagg.
+# It uses reactive code to avoid unnecessary calculations.
+#
+# Just press the "Run App" button on upper right of this panel.
+##############################
+
+## Below is the setup code that runs once when the shiny app is started
+
+# Load R packages
+library(rutils)
+library(shiny)
+library(dygraphs)
+
+## Below is the setup code that runs only once when the shiny app is started
+
+## Load daily S&P500 stock returns
+load(file="/Users/jerzy/Develop/lecture_slides/data/sp500_returns.RData")
+symbolstocks <- sort(colnames(returns))
+symbolstock <- "AAPL"
+
+
+
+captiont <- paste("Stat-arb Portfolio Strategy app_statarb_strat.R")
+
+## End setup code
+
+
+## Create elements of the user interface
+uifun <- shiny::fluidPage(
+  titlePanel(captiont),
+
+  fluidRow(
+    # Input stock symbols
+    # column(width=2, selectInput("symbol", label="Symbol for Reference",
+    #                             choices=rutils::etfenv$symbolv, selected="XLF")),
+    # Input stock symbol
+    column(width=1, selectInput("symbol", label="Stock", choices=symbolstocks, selected=symbolstock)),
+    # Input predictors
+    column(width=2, selectInput("predictor1", label="Predictor1",
+                                choices=rutils::etfenv$symbolv, selected="SVXY")),
+    column(width=2, selectInput("predictor2", label="Predictor2",
+                                choices=rutils::etfenv$symbolv, selected="VXX")),
+    # Input VIX symbol
+    # column(width=2, selectInput("symbol_vix", label="Symbol VIX",
+    #                             choices=c("VXX", "SVXY"), selected="VXX")),
+    # Input add annotations Boolean
+    column(width=2, selectInput("add_annotations", label="Add buy/sell annotations?", choices=c("True", "False"), selected="False")),
+    # Input the bid-ask spread
+    column(width=2, numericInput("bidask", label="Bid-ask:", value=0.0000, step=0.0001))
+  ),  # end fluidRow
+
+  fluidRow(
+    # Input look-back interval
+    # column(width=2, sliderInput("lookb", label="Look-back", min=2, max=100, value=50, step=1)),
+    column(width=3, sliderInput("lambda", label="lambda:", min=0.01, max=0.99, value=0.35, step=0.01)),
+    # Input threshold interval
+    column(width=3, sliderInput("threshold", label="Threshold", min=0.0001, max=0.01, value=0.002, step=0.0001)),
+    # Input the strategy coefficient: coeff=1 for momentum, and coeff=-1 for contrarian
+    column(width=2, selectInput("coeff", "Coefficient:", choices=c(-1, 1), selected=(-1))),
+    # column(width=2, sliderInput("lookb", label="lookb:", min=1, max=21, value=5, step=1)),
+    # column(width=2, sliderInput("slow_back", label="slow_back:", min=11, max=251, value=151, step=1)),
+    # Input the trade lag
+    column(width=2, sliderInput("lagg", label="lagg", min=1, max=8, value=1, step=1))
+  ),  # end fluidRow
+  
+  # Create output plot panel
+  dygraphs::dygraphOutput("dyplot", width="90%", height="550px")
+
+)  # end fluidPage interface
+
+
+## Define the server code
+servfun <- function(input, output) {
+
+  ## Create an empty list of reactive values.
+  values <- reactiveValues()
+
+  
+  ## Calculate the returns
+  retv <- shiny::reactive({
+    
+    symbol <- input$symbol
+    predictor1 <- input$predictor1
+    predictor2 <- input$predictor2
+    cat("Loading the data for ", symbol, "\n")
+    
+    # Load the stock data
+    retv <- get(symbol, returns)
+    
+    
+    # Load the ETF data
+    # symbolv <- predictor1
+    symbolv <- c(predictor1, predictor2)
+    # symbolv <- c(symbol, predictor1, predictor2)
+
+    # na.omit(rutils::etfenv$returns[, symbolv])
+    na.omit(cbind(retv, rutils::etfenv$returns[, symbolv]))
+    # na.omit(mget(symbolv, rutils::etfenv$returns))
+    # na.omit(cbind(
+    #   get(symbol, rutils::etfenv$returns),
+    #   get(predv1, rutils::etfenv$returns),
+    #   get(predv2, rutils::etfenv$returns)))
+    
+  })  # end Load the data
+  
+  ## Calculate the rolling regressions
+  regdata <- shiny::reactive({
+    
+    cat("Calculating the z-scores", "\n")
+    lambda <- input$lambda
+    
+    # Calculate the response and predictor
+    retv <- retv()
+    respv <- retv[, 1]
+    predv <- retv[, -1]
+
+    # Calculate the trailing z-scores
+    regdata <- HighFreq::run_reg(respv=respv, predv=predv, lambda=lambda, method="scale")
+    # regdata <- regdata[, 1, drop=FALSE]
+    # regdata[1:lookb] <- 0
+    # regdata[is.infinite(regdata)] <- 0
+    # regdata[is.na(regdata)] <- 0
+    regdata
+    
+  })  # end Load the data
+  
+
